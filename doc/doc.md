@@ -197,7 +197,7 @@ The emulator trace (`trace` function) demonstrates:
 cabal build
 
 # Run the emulator trace
-cabal run public-fund-demo
+cabal test escrow-emulator
 
 # Expected output:
 # 1. Wallet 1 locks 10 ADA in escrow
@@ -240,9 +240,6 @@ cabal run public-fund-demo
 - On-chain transparency
 
 ---
-
-
-
 ---
 
 ## Extension Points
