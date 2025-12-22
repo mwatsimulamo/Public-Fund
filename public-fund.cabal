@@ -2,7 +2,7 @@ cabal-version:       3.4
 name:                public-fund
 version:             0.1.0.0
 synopsis:            Public fund example (library + tests)
-author:              Israel Ahunanya
+author:              Saviour Uzoukwu
 maintainer:          education@iohk.io, cto@wims.io
 license:             Apache-2.0
 build-type:          Simple
@@ -51,7 +51,7 @@ common common-all-tests
 
 library
   import: common-all
-  hs-source-dirs: src
+  hs-source-dirs: app/Onchain
   exposed-modules:
     PublicFund
   other-modules:
@@ -61,19 +61,10 @@ library
     bytestring
   default-language: Haskell2010
 
-executable template-exe
-  import: common-all
-  hs-source-dirs: app
-  main-is: Main.hs
-  build-depends:
-    base >=4.14 && <5,
-    public-fund
-  default-language: Haskell2010
-
 test-suite escrow-emulator
   import: common-all-tests
   type: exitcode-stdio-1.0
-  hs-source-dirs: Ebu/Offchain
+  hs-source-dirs: app/Offchain
   main-is: Emulator.hs
 
   build-depends:
