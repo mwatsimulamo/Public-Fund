@@ -1,587 +1,470 @@
-# Coxy Plutus Playground – User Tutorial
+# 🧾 Detailed Tutorial: Multi-Signature Escrow Smart Contract
 
-## 📑 Table of Contents
+This tutorial covers a sophisticated multi-signature escrow smart contract (`PublicFund.hs`) that enables secure fund management with approval workflows. The contract supports deposit locking, official approvals, beneficiary releases, and depositor refunds under specific conditions.
 
-1. **📘 What Is Coxy Plutus Playground?**
-2. **🚀 Getting Started: First Look at the UI**
-3. **🏭 Using Prebuilt Industries (Template Mode)**
-4. **🧩 Designing Your Own Contract (Custom Industry Mode)**
-5. **📦 Datum Options Panel (State & Parameters)**
-6. **🎯 Redeemer Options Panel (Actions & Constraints)**
-7. **🛠 Generating JSON Specs & Haskell Code**
-8. **📥 Downloading & Using `ValidatorLogic.hs`**
-9. **🧪 Example Walkthrough: Simple Escrow Contract**
-10. **💡 Tips, Patterns, and Common Gotchas**
-11. **📚 Glossary of Terms (Detailed)**
+---
 
-## 1. 📘 What Is Coxy Plutus Playground?
+## 📚 Table of Contents
 
-Coxy Plutus Playground is a **UI helper** for designing Plutus smart contracts without starting from a blank Haskell file.
+1. [🏗️ Architectural Overview](#1-architectural-overview)
+2. [📦 Imports Overview](#2-imports-overview)
+3. [🗃️ Data Structures](#3-data-structures)
+4. [🧠 Core Validator Logic](#4-core-validator-logic)
+5. [⚙️ Validator Script Compilation](#5-validator-script-compilation)
+6. [🔌 Off-Chain Implementation](#6-off-chain-implementation)
+7. [🔄 Complete Workflow Example](#7-complete-workflow-example)
+8. [🧪 Testing Strategy](#8-testing-strategy)
+9. [✅ Best Practices](#9-best-practices)
+10. [📘 Glossary of Terms](#10-glossary-of-terms)
 
-It helps you:
+---
 
-* Choose an **industry / contract template** (DEX, escrow, lending, auctions, etc.), or define your **own custom contract**.
-* Select which **datum fields** you want (on-chain state & parameters).
-* Define **redeemer actions** (what users can do: `Deposit`, `Withdraw`, `Cancel`, etc.).
-* Attach **constraints** to those actions (e.g. *must be signed by buyer*, *before deadline*, *script owns NFT*, etc.).
-* Auto-generate:
+## 1. 🏗️ Architectural Overview
 
-  * **Datum JSON spec**
-  * **Redeemer JSON spec**
-  * A **Haskell `mkValidator` preview**
-  * A complete **Haskell module** (`ValidatorLogic.hs`) you can download.
+### System Architecture
 
-Think of it as:
+```mermaid
+flowchart TD
+    subgraph "Off-Chain Components"
+        W1[Depositor<br/>Wallet 1]
+        W2[Beneficiary<br/>Wallet 2]
+        W3[Official 1<br/>Wallet 3]
+        W4[Official 2<br/>Wallet 4]
+        
+        subgraph "Endpoints"
+            EP1[lock]
+            EP2[approve]
+            EP3[release]
+            EP4[refund]
+        end
+        
+        subgraph "Emulator Trace"
+            ET[Test Execution Flow]
+        end
+    end
+    
+    subgraph "On-Chain Components"
+        SC[Smart Contract<br/>PublicFund.hs]
+        V[Validator Logic]
+        D[EscrowDatum]
+        A[EscrowAction]
+    end
+    
+    subgraph "Blockchain Layer"
+        BC[Cardano Ledger]
+        UTXO[Script UTxO]
+    end
+    
+    %% Connections
+    W1 --> EP1
+    EP1 --> SC
+    W3 --> EP2
+    W4 --> EP2
+    EP2 --> SC
+    W2 --> EP3
+    EP3 --> SC
+    W1 --> EP4
+    EP4 --> SC
+    
+    SC --> V
+    V --> D
+    V --> A
+    SC --> UTXO
+    UTXO --> BC
+    
+    ET -.-> EP1
+    ET -.-> EP2
+    ET -.-> EP3
+    ET -.-> EP4
+```
 
-> **A “contract builder” that outputs ready-to-edit Plutus code and specs.**
+### Workflow Sequence
 
-## 2. 🚀 Getting Started: First Look at the UI
+```mermaid
+sequenceDiagram
+    participant D as Depositor (Wallet 1)
+    participant O1 as Official 1 (Wallet 3)
+    participant O2 as Official 2 (Wallet 4)
+    participant B as Beneficiary (Wallet 2)
+    participant SC as Smart Contract
+    participant BC as Blockchain
+    
+    Note over D,B: Phase 1: Fund Locking
+    D->>SC: lock() with 10 ADA
+    SC->>BC: Create UTxO with datum
+    
+    Note over D,B: Phase 2: Approvals (before deadline)
+    O1->>SC: approve()
+    SC->>BC: Update datum<br/>approvals: [O1]
+    
+    O2->>SC: approve()
+    SC->>BC: Update datum<br/>approvals: [O1, O2]
+    
+    Note over D,B: Phase 3: Release
+    B->>SC: release()
+    SC->>BC: Validate: 2 approvals ≥ required<br/>Validate: before deadline<br/>Validate: beneficiary signature
+    BC->>B: Transfer 10 ADA
+    
+    Note over D,B: Alternative: Refund Scenario
+    alt Insufficient approvals by deadline
+        D->>SC: refund()
+        SC->>BC: Validate: after deadline<br/>Validate: approvals < required<br/>Validate: depositor signature
+        BC->>D: Return 10 ADA
+    end
+```
 
-When you open the HTML page, you’ll see a **two-column layout**.
+---
 
-### 🔹 Left Side – Configuration
+## 2. 📦 Imports Overview
 
-* **Industry selector** (`<select id="industry">`)
-* Optional **“Custom Industry / Custom Contract”** section
-  (fields for custom contract title, ID, datum fields, actions, etc.).
-* **Datum options panel**
-* **Redeemer options panel**
-* Optional **advanced custom datum & redeemer** toggles.
-* **Generate Logic Spec** button.
+### On-Chain Imports (`PublicFund.hs`)
 
-### 🔹 Right Side – Outputs
+* **Plutus.V2.Ledger.Api:**
+  Core types: `POSIXTime`, `PubKeyHash`, `Validator`, `ScriptContext`, `TxInfo`.
 
-Stacked text areas:
+* **Plutus.V2.Ledger.Contexts:**
+  Transaction context utilities: `scriptContextTxInfo`, `txInfoSignatories`.
 
-1. **Datum JSON** – describes your chosen datum structure.
-2. **Redeemer JSON** – actions + constraints.
-3. **Haskell mkValidator (preview)** – the core validator logic skeleton.
-4. **Full Haskell Plutus module** – a compilable `ValidatorLogic.hs` template.
-   There’s also a **“Download ValidatorLogic.hs”** button.
+* **Plutus.V1.Ledger.Interval:**
+  Time interval operations: `contains`, `to`, `from`.
 
-## 3. 🏭 Using Prebuilt Industries (Template Mode)
+* **PlutusTx:**
+  Compilation and serialization: `compile`, `unstableMakeIsData`.
 
-This is the default mode when **“Custom Industry” is OFF**.
+### Off-Chain Imports (`Main.hs`)
 
-### 3.1 Choose an Industry
+* **Plutus.Contract:**
+  Contract monad and endpoints: `Contract`, `Endpoint`, `submitTxConstraints`.
 
-1. At the top left, use **Industry** dropdown.
-2. Pick something like **“DEX”, “Escrow”, “Lending”, “Auction”**, etc.
-3. When you change the selection:
+* **Plutus.Trace.Emulator:**
+  Testing framework: `EmulatorTrace`, `activateContractWallet`.
 
-   * **Datum options** (on the left) update with fields relevant to that contract.
-   * **Redeemer options** (below) update with actions and built-in constraints.
+* **Ledger:**
+  Address and transaction utilities: `scriptAddress`, `mustPayToTheScript`.
 
-### 3.2 Datum Options from Template
+---
 
-In the **Datum options** subpanel:
+## 3. 🗃️ Data Structures
 
-* You’ll see checkboxes like:
-
-  * `☑ seller :: PubKeyHash`
-  * `☐ buyer :: PubKeyHash`
-  * `☑ price :: Integer`
-  * etc.
-
-* Tick the fields you actually want your contract to use.
-
-* These become the record fields of `CoxyDatum` (or industry-specific type name).
-
-### 3.3 Redeemer Actions & Constraints from Template
-
-In the **Redeemer options** panel:
-
-* Each **action** (e.g. `PaySeller`, `Cancel`, `Bid`, `Close`) appears as a block:
-
-  * Title (action label).
-  * A list of **constraints** as checkboxes:
-
-    * `☑ signedBySeller`
-    * `☐ beforeDeadline`
-    * `☑ scriptHasNFT`
-    * etc.
-
-* When you tick constraints for an action:
-
-  * They appear in the **Redeemer JSON** under that action.
-  * Each becomes a Haskell call like:
-
-    ```haskell
-    traceIfFalse "signedBySeller" (constraint_signedBySeller dat ctx)
-    ```
-
-## 4. 🧩 Designing Your Own Contract (Custom Industry Mode)
-
-This is the fun part: **you define the whole contract “shape.”**
-
-### 4.1 Enable Custom Industry Mode
-
-On the left, you’ll have a toggle / checkbox like:
-
-> **Enable custom industry / contract**
-
-When you **check it**:
-
-* The **Industry dropdown is disabled** (grayed out).
-* A new **Custom Industry** section appears.
-* The prebuilt template fields disappear (so you don’t mix modes by accident).
-
-### 4.2 Custom Contract Metadata
-
-In the **Custom Industry / Contract** section, you’ll see inputs such as:
-
-* **Contract Title**
-
-  * e.g. `Escrow with Milestones`
-  * Used for display / docs (and you can later wire it into your Haskell module name if you want).
-
-* **Custom Industry ID**
-
-  * e.g. `escrowMilestone`
-  * Used as an internal ID; keep it **no spaces, camelCase or snake_case**.
-
-* **Datum Type Name**
-
-  * e.g. `EscrowDatum`
-  * This will be used instead of `CoxyDatum` in Haskell.
-
-* **Redeemer Type Name**
-
-  * e.g. `EscrowRedeemer`
-  * This becomes the Haskell `data EscrowRedeemer = ...` type.
-
-### 4.3 Add Custom Datum Fields
-
-In **Custom Datum Fields** section (e.g. `custom-industry-datum-list`):
-
-* Click **“Add datum field”** (or equivalent button).
-* For each row, fill in:
-
-  * **Field name** (`seller`, `buyer`, `deadline`, `price`, etc.)
-  * **Plutus type** (chosen from a dropdown):
-
-    * `Integer`
-    * `PubKeyHash`
-    * `POSIXTime`
-    * `CurrencySymbol`
-    * `TokenName`
-    * `BuiltinByteString`
-    * `Bool`
-    * etc.
-
-Example:
-
-* Field name: `seller`
-* Type: `PubKeyHash`
-
-This will generate in Haskell:
-
+### `EscrowDatum` - On-Chain State
 ```haskell
 data EscrowDatum = EscrowDatum
-    { cdSeller :: PubKeyHash
-    , ...
+    { edDepositor   :: PubKeyHash    -- Who locked the funds
+    , edBeneficiary :: PubKeyHash    -- Who can receive funds
+    , edOfficials   :: [PubKeyHash]  -- List of authorized officials (m)
+    , edApprovals   :: [PubKeyHash]  -- Collected approvals so far
+    , edRequired    :: Integer       -- Required approvals (n ≤ m)
+    , edDeadline    :: POSIXTime     -- Time limit for approvals
     }
 ```
+*Purpose*: Stores the complete state of the escrow contract on-chain.
 
-> **Note:** prefix `cd` is added by the generator for field names.
+### `EscrowAction` - Redeemer Types
+```haskell
+data EscrowAction
+    = Approve   -- Official approves the release
+    | Release   -- Beneficiary claims funds
+    | Refund    -- Depositor recovers funds
+```
+*Purpose*: Defines the three possible actions that can be performed on the escrow.
 
-### 4.4 Add Custom Redeemer Actions + Constraints
+---
 
-In **Custom Redeemer Actions** section (e.g. `custom-industry-actions-list`):
+## 4. 🧠 Core Validator Logic
 
-* Click **“Add action”** to create a new row.
-
-Each row has:
-
-* **Action name** (constructor name):
-
-  * e.g. `PaySeller`, `Cancel`, `ClaimRefund`
-  * These become Haskell constructors: `data EscrowRedeemer = PaySeller | Cancel | ClaimRefund`
-
-* **Label / description (optional)**:
-
-  * Human-friendly text for the UI/JSON, e.g. `Pay seller in full if conditions met`.
-
-* **Constraints (comma-separated IDs)**:
-
-  * A text field where you type constraint IDs like:
-
-    * `scriptHasNFT,signedByBuyer,beforeDeadline`
-  * Each one becomes:
-
-    * An entry in JSON under the action’s `constraints`.
-    * A Haskell trace line inside the matching `case` arm:
-
-      ```haskell
-      PaySeller ->
-            traceIfFalse "scriptHasNFT"       (constraint_scriptHasNFT dat ctx)
-        &&  traceIfFalse "signedByBuyer"     (constraint_signedByBuyer dat ctx)
-        &&  traceIfFalse "beforeDeadline"    (constraint_beforeDeadline dat ctx)
-      ```
-
-The generator also emits **stub functions** like:
+### Helper Functions
 
 ```haskell
-constraint_scriptHasNFT :: EscrowDatum -> ScriptContext -> Bool
-constraint_scriptHasNFT _ _ = True
+-- Check if transaction signed by specific key
+signedBy :: PubKeyHash -> ScriptContext -> Bool
+
+-- Check if transaction occurs before deadline
+beforeDeadline :: POSIXTime -> ScriptContext -> Bool
+
+-- Check if transaction occurs after deadline
+afterDeadline :: POSIXTime -> ScriptContext -> Bool
+
+-- Ensure official hasn't approved before and is authorized
+uniqueApproval :: PubKeyHash -> EscrowDatum -> Bool
 ```
 
-so you can later implement the actual logic.
-
-
-## 5. 📦 Datum Options Panel (State & Parameters)
-
-This panel is the **“what does the contract know?”** section.
-
-You’ll see:
-
-* In **template mode**:
-
-  * Checkboxes for existing fields defined by that industry.
-* In **custom mode**:
-
-  * The template checkboxes are not used; instead, all fields you added in custom UI are taken automatically.
-
-### 5.1 Optional Advanced Custom Datum Fields
-
-There’s also an **“Enable custom datum fields (advanced)”** toggle:
-
-* When enabled, a section appears where you can add extra fields as free-form text:
-
-  * Field name
-  * Haskell type (manually typed)
-
-This is useful when you want fields that:
-
-* Aren’t part of the industry template.
-* Are of more complex types you don’t want to expose in the main dropdown (e.g. `Maybe POSIXTime`, or custom sum types).
-
-These **advanced** fields go into `customFields` in the **Datum JSON** and into the Haskell record as extra fields.
-
-## 6. 🎯 Redeemer Options Panel (Actions & Constraints)
-
-This is the **“what can users do?”** section.
-
-### 6.1 Actions
-
-Each **action** (e.g. `Bid`, `Close`, `Liquidate`, `Deposit`, `Withdraw`) becomes:
-
-* A constructor in your redeemer type (e.g. `data AuctionRedeemer = Bid | Close`).
-* A `case` branch in the generated `mkValidator`:
-
-  ```haskell
-  mkValidator dat red ctx =
-    case red of
-      Bid   -> ...
-      Close -> ...
-  ```
-
-### 6.2 Constraints (Template Mode)
-
-For prebuilt industries:
-
-* Each action block has checkboxes for **reusable constraint IDs** like:
-
-  * `signedBySeller`
-  * `signedByBuyer`
-  * `beforeDeadline`
-  * `hasCorrectPrice`
-  * etc.
-
-Ticking them:
-
-* Adds them to **Redeemer JSON** under that action.
-* Generates `traceIfFalse` checks that **call stub functions** like `constraint_signedBySeller`.
-
-### 6.3 Constraints (Custom Mode)
-
-For custom actions:
-
-* You type constraints in the **Constraints** text field, **comma-separated**:
-
-  * `scriptHasNFT,signedByBuyer,beforeDeadline`
-* The generator splits on commas, trims whitespace, and uses each non-empty token as a constraint ID.
-* They behave exactly like template constraints (they just don’t come from a pre-defined list).
-
-
-## 7. 🛠 Generating JSON Specs & Haskell Code
-
-Once you’ve configured your datum and actions:
-
-1. Click **“Generate Logic Spec”**.
-
-The script:
-
-1. Chooses **industry**:
-
-   * Template mode → from selected dropdown.
-   * Custom mode → from `getCustomIndustryFromUI()`.
-
-2. Builds:
-
-   * `datumSpec = buildDatumSpec(industry)`
-   * `redeemerSpec = buildRedeemerSpec(industry)`
-
-3. Writes to outputs:
-
-   * **Datum JSON** (`datum-json-output`):
-
-     ```json
-     {
-       "datumType": "EscrowDatum",
-       "fields": [
-         { "id": "seller", "type": "PubKeyHash", "label": "seller :: PubKeyHash" },
-         ...
-       ],
-       "customFields": []
-     }
-     ```
-
-   * **Redeemer JSON** (`redeemer-json-output`):
-
-     ```json
-     {
-       "redeemerType": "EscrowRedeemer",
-       "actions": [
-         {
-           "id": "PaySeller",
-           "label": "Pay seller in full",
-           "constraints": [
-             "signedByBuyer",
-             "beforeDeadline"
-           ]
-         }
-       ],
-       "customActions": []
-     }
-     ```
-
-4. Generates Haskell:
-
-   * **Preview** `mkValidator` (3rd box)
-   * **Full module** (4th box) via `mkFullHaskellModule` – including:
-
-     * `data <DatumType>`
-     * `data <RedeemerType>`
-     * `mkValidator`
-     * Stubs `constraint_<id>` for each constraint.
-
-
-## 8. 📥 Downloading & Using `ValidatorLogic.hs`
-
-When you are happy with the generated module:
-
-1. Click **“Download ValidatorLogic.hs”**.
-2. The browser will save a file named `ValidatorLogic.hs`.
-3. Move this into your **Plutus project** (e.g. under `src/`).
-4. Wire it into your build:
-
-   * Import it from your main validator builder.
-   * Use `mkValidator` with `PlutusTx.compile`.
-   * Wrap using `mkValidatorScript` / `TypedValidator` patterns depending on your framework.
-
-Then you can:
-
-* Use the generated script on a **testnet** or **local emulator**.
-* Modify the stubs for constraints to implement real logic.
-
-
-## 9. 🧪 Example Walkthrough: Simple Escrow Contract
-
-Let’s do a short, concrete run:
-
-### 9.1 Choose Mode
-
-* Turn **ON** “Custom Industry / Contract”.
-
-### 9.2 Metadata
-
-* Contract Title: `Simple Escrow`
-* Industry ID: `simpleEscrow`
-* Datum Type: `EscrowDatum`
-* Redeemer Type: `EscrowRedeemer`
-
-### 9.3 Datum Fields
-
-Add 4 fields:
-
-1. `seller :: PubKeyHash`
-2. `buyer  :: PubKeyHash`
-3. `price  :: Integer`
-4. `deadline :: POSIXTime`
-
-### 9.4 Redeemer Actions
-
-Add 2 actions:
-
-1. **Name:** `PaySeller`
-   **Label:** `Release funds to seller`
-   **Constraints:** `signedByBuyer,beforeDeadline`
-
-2. **Name:** `RefundBuyer`
-   **Label:** `Refund buyer after deadline`
-   **Constraints:** `signedBySeller,afterDeadline`
-
-### 9.5 Generate
-
-Click **Generate Logic Spec**.
-
-Check:
-
-* Datum JSON: has `seller`, `buyer`, `price`, `deadline`.
-* Redeemer JSON:
-
-  * `PaySeller` has constraints `signedByBuyer`, `beforeDeadline`.
-  * `RefundBuyer` has `signedBySeller`, `afterDeadline`.
-
-Open **Haskell preview**:
-
-* See `EscrowDatum` and `EscrowRedeemer` types.
-* `mkValidator` with two branches:
-
-  ```haskell
-  mkValidator dat red ctx =
-    case red of
-      PaySeller ->
-            traceIfFalse "signedByBuyer" (constraint_signedByBuyer dat ctx)
-        &&  traceIfFalse "beforeDeadline" (constraint_beforeDeadline dat ctx)
-      RefundBuyer ->
-            traceIfFalse "signedBySeller" (constraint_signedBySeller dat ctx)
-        &&  traceIfFalse "afterDeadline" (constraint_afterDeadline dat ctx)
-  ```
-
-In the full module, fill in constraint stubs with real logic, e.g.:
+### Main Validator Logic
+
+#### **Approve Action** (Official)
+```haskell
+Conditions:
+1. Transaction must occur BEFORE deadline
+2. Exactly one signer required
+3. Signer must be in officials list
+4. Signer must NOT have approved before
+```
+
+#### **Release Action** (Beneficiary)
+```haskell
+Conditions:
+1. Transaction must occur BEFORE deadline
+2. Collected approvals ≥ required approvals
+3. Beneficiary must sign the transaction
+```
+
+#### **Refund Action** (Depositor)
+```haskell
+Conditions:
+1. Transaction must occur AFTER deadline
+2. Collected approvals < required approvals
+3. Depositor must sign the transaction
+```
+
+### Validator Implementation
+```haskell
+mkValidator :: EscrowDatum -> EscrowAction -> ScriptContext -> Bool
+mkValidator d act ctx = case act of
+    Approve  -> checkApprove d ctx
+    Release  -> checkRelease d ctx
+    Refund   -> checkRefund d ctx
+```
+
+---
+
+## 5. ⚙️ Validator Script Compilation
 
 ```haskell
-constraint_signedByBuyer :: EscrowDatum -> ScriptContext -> Bool
-constraint_signedByBuyer dat ctx =
-  txSignedBy (scriptContextTxInfo ctx) (cdBuyer dat)
+-- Convert typed validator to untyped version
+mkValidatorUntyped :: BuiltinData -> BuiltinData -> BuiltinData -> ()
 
-constraint_beforeDeadline :: EscrowDatum -> ScriptContext -> Bool
-constraint_beforeDeadline dat ctx =
-  contains (to (cdDeadline dat)) (txInfoValidRange (scriptContextTxInfo ctx))
+-- Compile to Plutus Core
+validator :: Validator
+validator = mkValidatorScript $$(PlutusTx.compile [|| mkValidatorUntyped ||])
 ```
 
-…and so on.
+---
 
+## 6. 🔌 Off-Chain Implementation
 
-## 10. 💡 Tips, Patterns, and Common Gotchas
+### Contract Schema
+```haskell
+type EscrowSchema =
+        Endpoint "lock" ()
+    .\/ Endpoint "approve" ()
+    .\/ Endpoint "release" ()
+    .\/ Endpoint "refund" ()
+```
 
-### ✅ Good Practices
+### Script Address
+```haskell
+escrowAddress :: Address
+escrowAddress = scriptAddress validator
+```
 
-* **Use PascalCase for type names:** `EscrowDatum`, `EscrowRedeemer`.
-* **Use ConstructorCase** for actions: `Open`, `Close`, `Cancel`, `Bid`.
-* Keep **constraint IDs short but meaningful**:
+### Endpoint Functions
 
-  * `signedBySeller`, `beforeDeadline`, `hasScriptNFT`, `paysExactPrice`.
+#### **Lock Endpoint**
+```haskell
+lock :: Contract () EscrowSchema Text ()
+lock = do
+    -- Create datum with initial state
+    let datum = EscrowDatum { ... }
+    -- Submit transaction locking funds
+    submitTxConstraints validator $
+        mustPayToTheScript datum (Ada.lovelaceValueOf 10_000_000)
+```
 
-### ⚠️ Common Gotchas
+#### **Approve Endpoint**
+```haskell
+approve :: Contract () EscrowSchema Text ()
+approve = do
+    -- Find script UTxO
+    utxos <- utxosAt escrowAddress
+    -- Submit approval transaction
+    submitTxConstraintsSpending validator utxos $
+        mustSpendScriptOutput oref (Redeemer $ toBuiltinData Approve)
+```
 
-* **No fields in custom datum** → generator will alert you.
-* **No actions in custom mode** → generator will alert you.
-* **Typos in Plutus types** (in advanced custom datum fields) won’t be checked until GHC/Plutus compile time.
-* **Constraints do nothing at first** – they’re **stubs** returning `True` until you implement them.
+#### **Release Endpoint**
+```haskell
+release :: Contract () EscrowSchema Text ()
+release = do
+    -- Similar to approve but with Release redeemer
+    -- Must be called by beneficiary after sufficient approvals
+```
 
+### Emulator Trace
+```haskell
+trace :: EmulatorTrace ()
+trace = do
+    -- Activate depositor wallet
+    h1 <- activateContractWallet (knownWallet 1) lock
+    waitNSlots 1
+    
+    -- Activate official 1 for approval
+    h3 <- activateContractWallet (knownWallet 3) approve
+    waitNSlots 1
+    
+    -- Activate official 2 for approval
+    h4 <- activateContractWallet (knownWallet 4) approve
+    waitNSlots 1
+    
+    -- Activate beneficiary for release
+    h2 <- activateContractWallet (knownWallet 2) release
+    waitNSlots 1
+```
 
-## 11. 📚 Glossary of Terms (Detailed)
+---
 
-### 🔹 Datum
+## 7. 🔄 Complete Workflow Example
 
-The **on-chain state / parameters** attached to a UTxO at a script address.
+### State Transition Diagram
 
-* In Plutus V2, it is a typed Haskell value (e.g. `EscrowDatum`) that is serialized and stored on-chain.
-* In this playground, the datum is described by:
+```mermaid
+stateDiagram-v2
+    [*] --> Locked: Depositor calls lock()
+    Locked --> Approved1: Official1 approves
+    Approved1 --> Approved2: Official2 approves
+    Approved2 --> Released: Beneficiary releases
+    
+    Locked --> Refunded: Deadline passed<br/>+ insufficient approvals
+    Approved1 --> Refunded: Deadline passed<br/>+ insufficient approvals
+    
+    state Locked {
+        [*] --> Waiting
+        Waiting --> HasApprovals: At least 1 approval
+    }
+    
+    state Approved2 {
+        ReadyForRelease
+    }
+    
+    Released --> [*]
+    Refunded --> [*]
+```
 
-  * Datum type name (`EscrowDatum`)
-  * Fields (`seller :: PubKeyHash`, `price :: Integer`, etc.).
-
-### 🔹 Redeemer
-
-The **“instruction”** passed when a script UTxO is spent.
-
-* It tells the validator **which action** is being performed.
-* In this tool, each redeemer constructor corresponds to an action (`PaySeller`, `RefundBuyer`, `Bid`, etc.).
-
-### 🔹 Industry
-
-A **template profile** for a family of contracts:
-
-* e.g. DEX, escrow, lending, auction, RFQ, oracle, etc.
-* Each has:
-
-  * Common datum fields
-  * Standard actions
-  * A library of constraints
-
-### 🔹 Custom Industry / Custom Contract
-
-A fully **user-defined profile**:
-
-* You choose:
-
-  * Type names
-  * Datum fields + types
-  * Redeemer actions
-  * Constraint IDs per action
-* The playground generates all the scaffolding for you.
-
-### 🔹 Constraint
-
-A reusable **predicate stub** representing a rule you want for an action.
-
-Examples:
-
-* `signedByBuyer` → the transaction must be signed by `cdBuyer dat`.
-* `beforeDeadline` → the validity range must be before `cdDeadline dat`.
-* `scriptHasNFT` → the script must control a specific NFT.
-
-Each constraint becomes:
-
-* An ID string in JSON.
-* A `traceIfFalse` line in `mkValidator`.
-* A stub Haskell function `constraint_<id>` to implement.
-
-### 🔹 `mkValidator`
-
-The core **validator function**:
+### Step-by-Step Execution
 
 ```haskell
-mkValidator :: DatumType -> RedeemerType -> ScriptContext -> Bool
+-- 1. Initial Setup
+let depositor = knownWallet 1
+    beneficiary = knownWallet 2
+    officials = [knownWallet 3, knownWallet 4]
+    deadline = 20_000  -- POSIX time
+    requiredApprovals = 2
+
+-- 2. Create initial datum
+let initialDatum = EscrowDatum
+    { edDepositor = mockWalletPaymentPubKeyHash depositor
+    , edBeneficiary = mockWalletPaymentPubKeyHash beneficiary
+    , edOfficials = map mockWalletPaymentPubKeyHash officials
+    , edApprovals = []  -- No approvals yet
+    , edRequired = requiredApprovals
+    , edDeadline = deadline
+    }
+
+-- 3. Lock funds (executed by depositor)
+-- Transaction creates UTxO at script address with datum
+
+-- 4. Official 1 approves
+-- Transaction spends script UTxO, adds official's pubkey to approvals list
+
+-- 5. Official 2 approves
+-- Transaction spends script UTxO again, updates approvals list
+
+-- 6. Beneficiary releases funds
+-- Transaction spends final UTxO, sends funds to beneficiary
 ```
 
-* Determines whether spending the script UTxO is **allowed**.
-* Returns `True` to accept, `False` to reject (via on-chain `error`).
+### Expected State Transitions
+```
+Initial:  [Depositor: Wallet1, Approvals: []]
+Step 1:   [Depositor: Wallet1, Approvals: [Wallet3]]
+Step 2:   [Depositor: Wallet1, Approvals: [Wallet3, Wallet4]]
+Final:    Funds transferred to Wallet2 (Beneficiary)
+```
 
-### 🔹 `ScriptContext`
+---
 
-Information about the **spending transaction**:
+## 8. 🧪 Testing Strategy
 
-* Inputs / outputs
-* Signatories
-* Validity interval
-* Values being moved
-* Etc.
+### Test Coverage Matrix
 
-Constraints use it heavily (e.g. verifying signatures, deadlines, amounts).
+| Test Case | Action Sequence | Expected Result |
+|-----------|----------------|-----------------|
+| Happy Path | lock → approve ×2 → release | Success, funds released |
+| Insufficient Approvals | lock → approve ×1 → refund after deadline | Success, funds refunded |
+| Double Approval | lock → approve → approve (same official) | Failure |
+| Early Refund | lock → refund before deadline | Failure |
+| Unauthorized Release | lock → approve ×2 → release (not beneficiary) | Failure |
+| Late Release | lock → approve ×2 → release after deadline | Failure |
 
-### 🔹 `traceIfFalse`
-
-A Plutus helper:
-
+### Emulator Testing
 ```haskell
-traceIfFalse :: BuiltinString -> Bool -> Bool
+testFullWorkflow :: EmulatorTrace ()
+testFullWorkflow = do
+    -- Test successful flow
+    void $ activateContractWallet w1 lock
+    void $ activateContractWallet w3 approve
+    void $ activateContractWallet w4 approve
+    void $ activateContractWallet w2 release
+    
+    -- Check final balances
+    assertBalance w2 (Ada.lovelaceValueOf 10_000_000)
 ```
 
-* If condition is `False`, logs the message and returns `False`.
-* Used for debugging and readable error messages.
+---
 
-### 🔹 `CoxyDatum`, `CoxyRedeemer`
+## 9. ✅ Best Practices
 
-Default type names when an industry / custom contract does not override type names.
+### Security Considerations
+1. **Signature Validation**: Always verify signers match expected roles
+2. **Time Validation**: Use `beforeDeadline`/`afterDeadline` appropriately
+3. **State Consistency**: Ensure datum updates correctly track approvals
 
-* In your custom contract you usually replace them with:
+### Code Quality
+1. **Clear Trace Messages**: Use `traceIfFalse` with descriptive messages
+2. **Input Validation**: Check list lengths and element uniqueness
+3. **Error Handling**: Handle edge cases in off-chain code
 
-  * `EscrowDatum`, `EscrowRedeemer`
-  * `DexDatum`, `DexRedeemer`
-  * etc.
+### Gas Optimization
+1. **Minimal On-Chain Logic**: Keep validator functions simple
+2. **Efficient Data Structures**: Use appropriate list operations
+3. **Batch Operations**: Where possible, combine actions
 
+---
+
+## 10. 📘 Glossary of Terms
+
+| Term | Definition |
+|------|------------|
+| **Escrow** | Financial arrangement where assets are held by third party until conditions met |
+| **Datum** | On-chain data storing contract state (approvals, parties, deadlines) |
+| **Redeemer** | Action type specifying what operation to perform |
+| **m-of-n Approval** | Requires m approvals out of n possible officials |
+| **POSIXTime** | Unix timestamp used for deadline tracking |
+| **PubKeyHash** | Cryptographic hash identifying a wallet |
+| **UTxO** | Unspent Transaction Output, fundamental unit of Cardano ledger |
+| **Script Address** | Address derived from validator script hash |
+| **Endpoint** | Off-chain interface for interacting with contract |
+| **Emulator Trace** | Testing framework for simulating blockchain interactions |
+
+---
+
+## 🎯 Key Takeaways
+
+1. **Flexible Approval System**: The contract supports any m-of-n approval scheme
+2. **Time-Based Fallbacks**: Automatic refund if approvals insufficient by deadline
+3. **Role-Based Access**: Clear separation between depositor, officials, beneficiary
+4. **State Tracking**: On-chain datum tracks approval progress
+5. **Comprehensive Testing**: Full emulator trace validates all scenarios
+
+This multi-signature escrow contract provides a robust foundation for implementing governance-controlled fund release mechanisms, suitable for DAOs, corporate treasuries, or grant disbursement systems.
+
+---
+
+## 🔗 Related Resources
+
+- [Plutus Documentation](https://plutus.readthedocs.io/)
+- [Cardano Developer Portal](https://developers.cardano.org/)
+- [Mermaid.js Documentation](https://mermaid-js.github.io/mermaid/)
+- [Plutus Pioneer Program](https://plutus-pioneer-program.readthedocs.io/)
+
+---
+
+*Note: This tutorial assumes familiarity with Haskell, Plutus, and basic blockchain concepts. For beginners, start with the Plutus Pioneer Program materials.*
