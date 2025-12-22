@@ -260,20 +260,3 @@ Total demo length: aim for 3–5 minutes.
 * `src/Main.hs` — On-chain validator, wrapper, artifact helpers, mock data, and test suite (single-file test harness).
 * `assets/public_fund.plutus` — (generated) compiled validator script.
 * `assets/sample_fund_datum.cbor` — (generated) serialized sample datum.
-
----
-
-## Quick Notes for Reviewers
-
-* Tests are intentionally comprehensive and deterministic using `tasty` + `HUnit` and cover both success and failure paths.
-* The `main` binary both writes artifacts and executes tests so reviewers can reproduce artifacts and test results from a single run.
-* The documentation targets reviewers expecting a clear mapping between the contract requirements (n-of-m approvals, deadlines, refund path) and specific test cases.
-
----
-
-If you want, I can now:
-
-* convert this document into a `README.md` formatted for your repo root; or
-* export it as a PDF or slide deck for submission/demonstration.
-
-Which would you like next?
