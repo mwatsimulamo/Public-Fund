@@ -1,5 +1,6 @@
 # 🧾 Detailed Tutorial: Multi-Signature Escrow Smart Contract
 I am Olivier Mwatsimulamo, a student OF Haskell Plutus at EBU... 
+
 This tutorial covers a sophisticated multi-signature escrow smart contract (`PublicFund.hs`) that enables secure fund management with approval workflows. The contract supports deposit locking, official approvals, beneficiary releases, and depositor refunds under specific conditions.
 
 ---
