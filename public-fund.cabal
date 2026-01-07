@@ -69,7 +69,7 @@ test-suite escrow-emulator
 
   build-depends:
       base >=4.14 && <5
-    , wspace          
+    , public-fund          
     , bytestring
     , containers
     , text
