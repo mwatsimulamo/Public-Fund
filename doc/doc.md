@@ -24,6 +24,16 @@ This implementation follows the CP108 Final Project requirements and provides:
 * Provide clear off-chain interaction patterns for all stakeholders
 * Demonstrate a complete end-to-end workflow through emulator testing
 
+The idea is simple: a depositor locks funds into the contract, and their release depends on the approval of a predefined number of officials, before a specific deadline.
+
+Each official can approve only once. When the required number of approvals is reached, the beneficiary can release the funds.
+
+If the deadline passes without enough approvals, the funds are safely refunded to the depositor.
+
+This contract ensures transparency, security, and collective accountability in the management of public or community funds.
+
+Let’s now walk through how this contract works, step by step.”
+
 ---
 
 ## Contract Specification
